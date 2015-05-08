@@ -1,6 +1,7 @@
-Market Segments
+Tempus -- Robust Geotemporal Data Analysis
 ===============
 
+#Background
 Dynamically look at pricing patterns in markets over time. Specifically, this
 software is designed to answer a few question:
 
