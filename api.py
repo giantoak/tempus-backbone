@@ -49,7 +49,8 @@ def api_get_comparison():
         raise
 
     cdata = agg.get_comparison_ts(data['table'], data['group_col'],
-                                  comps, data['response_col'])
+                                  comps, data['response_col'],
+                                  sort=data.get('sort', False))
     response = []
     for (dt, v) in cdata:
         response.append((str(dt), v))
@@ -62,7 +63,8 @@ def api_get_series():
     data = request.args
     res = agg.get(data['table'], data['response_col'],
             data.get('group_col', None), data.get('group', None),
-            data.get('start', None), data.get('end', None))
+            start=data.get('start', None), end=data.get('end', None),
+            sort=data.get('sort', False))
 
     response = []
     for (dt, v) in res:
@@ -71,4 +73,4 @@ def api_get_series():
 
 if __name__ == '__main__':
     logger.setLevel(logging.DEBUG)
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=int(sys.argv[1]))

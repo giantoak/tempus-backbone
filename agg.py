@@ -14,7 +14,7 @@ logger.setLevel(logging.INFO)
 logging.basicConfig()
 
 def get(table, response_col, target_col=None, target=None, start=None,
-        end=None):
+        end=None, sort=False):
 
 
 
@@ -32,6 +32,9 @@ def get(table, response_col, target_col=None, target=None, start=None,
         tc = getattr(t, target_col)
         q = q.filter(tc == target)
 
+    if sort:
+        q = q.order_by(ts)
+
     res = q.all()
 
     return res
@@ -39,7 +42,7 @@ def get(table, response_col, target_col=None, target=None, start=None,
 def make_postgres_array(li):
     return '{' + ','.join(map('"{}"'.format, li)) + '}'
 
-def get_comparison_ts(table, target_col, groups, resp):
+def get_comparison_ts(table, target_col, groups, resp, sort=False):
     t = tables[table]
     ts = getattr(t, table_cols[table]['timestamp'])
     group_col = getattr(t, target_col)
@@ -47,6 +50,9 @@ def get_comparison_ts(table, target_col, groups, resp):
 
     q = session.query(ts, func.avg(resp_col)).filter(group_col.in_(groups))\
             .group_by(ts)
+
+    if sort:
+        q = q.order_by(ts)
 
     return q.all()
 
