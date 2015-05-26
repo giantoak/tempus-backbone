@@ -1,10 +1,12 @@
-from flask import Flask, make_response, request
+from functools import wraps
+from flask import Flask, make_response, request, jsonify
 from initdb import tables, session, table_cols, table_conf
-
 import agg
 import json
 import logging
 import sys
+from jsonschema import validate
+from jsonschema.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -12,10 +14,26 @@ logging.basicConfig()
 
 app = Flask(__name__)
 
+def validate_schema(schema):
+    def decorator(f):
+        @wraps(f)
+        def validation_wrapper(*args, **kwargs):
+            # Without any arguments, return the raw schema
+            if len(request.args) == 0:
+                return jsonify(schema), 200
+            try:
+                validate(request.args, schema)
+            except ValidationError, e:
+                return jsonify({"error": e.message}), 400
+            return f(*args, **kwargs)
+        return validation_wrapper
+    return decorator
+
 @app.route('/api')
 def api_root():
     ''' GET Tempus configuration file '''
     return make_response(json.dumps(table_cols))
+
 
 @app.route('/api/arima')
 def api_arima():
@@ -38,7 +56,33 @@ def api_diffindiff():
 
     return dd
 
+comparison_schema = {
+        "title": "Comparison group selection",
+        "description": "Select comparison groups based off a comparison"\
+                       " column, a target group, a set of covariates, and a"\
+                       " response variable.",
+        "type": "object",
+        "properties": {
+            "table": {
+                "type": "string"
+                },
+            "group_col": {
+                "type": "string"
+                },
+            "group": {
+                "type": "string"
+                },
+            "covs": {
+                "type": "string"
+                },
+            "response_col": {
+                "type": "string"
+                }
+            },
+        "required": ["table", "group_col", "group", "covs", "response_col"]
+        }
 @app.route('/api/comparison')
+@validate_schema(comparison_schema)
 def api_get_comparison():
     data = request.args
     covs = data['covs'].split('|')
@@ -58,7 +102,38 @@ def api_get_comparison():
                                     'groups': comps
                                     }))
 
+get_series_schema = {
+        "title": "Time series selection",
+        "description": "Get raw counts of a response variable by time series"\
+                       ", optionally filtering by a groupable variable.",
+        "type": "object",
+        "properties": {
+            "table": {
+                "type": "string"
+                },
+            "group_col": {
+                "type": "string"
+                },
+            "group": {
+                "type": "string"
+                },
+            "start": {
+                "type": "string"
+                },
+            "end": {
+                "type": "string"
+                },
+            "response_col": {
+                "type": "string"
+                },
+            "sort": {
+                "type": "string"
+                }
+            },
+        "required": ["table", "response_col"]
+        }
 @app.route('/api/series')
+@validate_schema(get_series_schema)
 def api_get_series():
     data = request.args
     res = agg.get(data['table'], data['response_col'],
