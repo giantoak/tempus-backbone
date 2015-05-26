@@ -146,6 +146,30 @@ def api_get_series():
         response.append((str(dt), v))
     return make_response(json.dumps({'result': response}))
 
+get_groups_schema = {
+        "title": "Display group selection",
+        "description": "Show all variables within a given groupable column",
+        "type": "object",
+        "properties": {
+            "table": {
+                "type": "string"
+                },
+            "group_col": {
+                "type": "string"
+                }
+            },
+        "required": ["table", "group_col"]
+        }
+@app.route('/api/groups')
+@validate_schema(get_groups_schema)
+def api_get_groups():
+    data = request.args
+    res = agg.get_groups(data['table'], data['group_col'])
+    results = []
+    for x in res:
+        results.append(x[0])
+    return jsonify({data['group_col']: results})
+
 if __name__ == '__main__':
     logger.setLevel(logging.DEBUG)
     app.run(debug=True, port=int(sys.argv[1]))

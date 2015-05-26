@@ -13,6 +13,13 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 logging.basicConfig()
 
+def get_groups(table, group_col):
+    t = tables[table]
+    col = getattr(t, group_col)
+    q = session.query(func.distinct(col)).filter(col != None)
+
+    return q.all()
+
 def get(table, response_col, target_col=None, target=None, start=None,
         end=None, sort=False):
 
