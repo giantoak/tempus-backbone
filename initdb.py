@@ -24,7 +24,7 @@ def get_time_range(table, timestamp):
     return map(str, (time_min, time_max))
 
 # Initialize application by reading in configuration files
-with open('application.yml') as f:
+with open('application.yml.conf') as f:
     conf = yaml.safe_load(f)
 
 
