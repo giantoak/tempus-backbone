@@ -151,7 +151,7 @@ CREATE OR REPLACE FUNCTION diffindiff (TEXT, TEXT[], TEXT) RETURNS SETOF RECORD 
 ' LANGUAGE 'plr' STRICT;
 
 -- Not yet working:
-CREATE OR REPLACE FUNCTION diffindiff_data (target TEXT, comparison TEXT[],
+/*CREATE OR REPLACE FUNCTION diffindiff_data (target TEXT, comparison TEXT[],
     date TEXT, logged BOOLEAN, normalize BOOLEAN, data_table TEXT,
     date_col TEXT, group_col TEXT, dv_col TEXT, region_col TEXT) RETURNS SETOF
     RECORD AS '
@@ -163,4 +163,23 @@ CREATE OR REPLACE FUNCTION diffindiff_data (target TEXT, comparison TEXT[],
 
     return(results)
 
+' LANGUAGE 'plr' STRICT;*/
+
+CREATE OR REPLACE FUNCTION diffindiff_data(region TEXT, comparison_regions TEXT[], comparison_date DATE) RETURNS SETOF RECORD AS'
+    library(rlines)
+    comparisons <- paste("(",toString(paste("''",comparison_regions,"''", sep="")),")", sep="")
+    query <- paste("SELECT msaname AS region, to_char(timestamp, ''YYYY-MM'') AS monthdate, count(*) AS counts
+        FROM escort_ads
+        WHERE msaname = ''", region, "'' OR msaname IN ", comparisons, " 
+        GROUP BY region, monthdate
+        ORDER BY monthdate", sep = "")
+
+    df <- pg.spi.exec(query)
+' LANGUAGE 'plr' STRICT;
+
+CREATE OR REPLACE FUNCTION r_max (integer, integer) RETURNS integer AS '
+if (arg1 > arg2)
+return(arg1)
+else
+return(arg2)
 ' LANGUAGE 'plr' STRICT;

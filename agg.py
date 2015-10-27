@@ -2,12 +2,18 @@
 from __future__ import print_function
 import sqlalchemy
 from sqlalchemy import func
-from initdb import tables, table_cols, session
+from initdb import tables, table_cols, session, engine
+from sqlalchemy.exc import DataError, SQLAlchemyError
 import datetime
 import logging
 import math
 import numpy as np
-
+import pandas
+import json
+import requests
+import pdb
+import datetime
+import numpy
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -69,13 +75,38 @@ def get_comparisons(table, target_col, target, covs):
         if cov not in table_cols[table]['covariates']:
             raise ValueError("{} not in covariates for table {}".format(cov,
                 table))
-    cov_str = make_postgres_array(covs)
-    q = session.execute('''SELECT * FROM matchit(:table, :target_col, :target,
-                           :cov_str) AS t(comparisons TEXT) ''',
-        dict(table=table, target_col=target_col, target=target,
-             cov_str=cov_str)
-    )
-    comparison_groups = [x[0] for x in q]
+    #Covariates to be used in select statement
+    cov_select = ','.join(covs)
+
+    #Construst the where clause.
+    where_clause = target_col + ' IS NOT NULL'
+    #Add the covariants to the where clause, we just loop through and append IS NOT NULL behind them
+    for cov in covs:
+        where_clause += ' AND ' + cov + ' IS NOT NULL'
+
+    #Test if bad parameters were given to us, if so catch it. Also catch general errors. Raise both errors.
+    try:
+        select_statement = 'SELECT ' + target_col + ', ' + cov_select + ' FROM ' + table + ' WHERE ' + where_clause
+        df = pandas.read_sql_query(select_statement, con=engine)
+
+        # Orient by records to dictionary
+        frame = df.to_dict(orient = 'records')
+
+        data = {'data':frame, 'treatment_col':target_col, 'treatment_selection':target, 'covariate_col':covs}
+        url = 'http://ec2-96-127-78-36.us-gov-west-1.compute.amazonaws.com/ocpu/library/rlines/R/matchit_data/json'
+        headers = {'Content-Type':'application/json'}
+        data = json.dumps(data)
+
+        #Call the opencpu server.
+        response = requests.post(url, data=data, headers=headers)
+        comparison_groups = json.loads(response.content)
+
+    except DataError as data_error:
+        session.rollback()
+        raise data_error
+    except SQLAlchemyError as error:
+        session.rollback()
+        raise error
 
     return comparison_groups
 
@@ -105,32 +136,33 @@ def diffindiff(target, comparisons, date):
         where estimate, standard error, t-statistic, and p-value are
         dictionaries mapping to scalar values.
 
-    Notes
-    -----
-    The hardcoded locations are drawn from the list of Backpage subdomains.
-
     '''
-    #TODO: Generalize this to any table and any column
+    # The comparison dictionary (soon to be json)  that will be passed to the open cpu api
+    comparison_json = get_comparison_dictionary(comparisons)
+    msanames = comparisons
+    msanames.append(target)
+    df = get_diffindiff_data(msanames)
+    valid = check_dataframe(df, date)
+    if valid:
+        pass
+    else:
+        raise ValueError
+    # Orient by records to dictionary
+    frame = df.to_dict(orient = 'records')
 
-    if isinstance(comparisons, basestring):
-        comparisons = [comparisons]
-
-    comp_str = '{' + ','.join(map('"{}"'.format, comparisons)) + '}'
-    q = session.execute('''SELECT * FROM diffindiff(:target, :comparisons,
-        :date) AS t(est FLOAT, stderr FLOAT, tstat FLOAT, pval FLOAT)''',
-        dict(target=target, comparisons=comp_str, date=date)
+    data = {'target.region':target, 'comparison.region.set':comparison_json, 'event.date':date, 'input_data':frame}
+    url = 'http://ec2-96-127-78-36.us-gov-west-1.compute.amazonaws.com/ocpu/library/rlines/R/diffindiff_data/json'
+    headers = {'Content-Type':'application/json'}
+    date_handler = lambda obj: (
+        obj.isoformat()
+        if isinstance(obj, datetime.datetime)
+        or isinstance(obj, datetime.date)
+        else None
     )
+    data = json.dumps(data, default=date_handler)
+    response = requests.post(url, data=data, headers=headers)
 
-    headers = ('est', 'stderr', 'tstat', 'pval')
-    r = q.fetchall()
-
-    results = dict(
-            diff_in_diff = dict(zip(headers, r[0])),
-            target_diff = dict(zip(headers, r[1])),
-            comparison_diff = dict(zip(headers, r[2])),
-            )
-
-    return results
+    return response.content
 
 def groupby(table, xs, ys, agg, **kwargs):
     '''
@@ -448,3 +480,63 @@ if __name__ == '__main__':
                    tend=datetime.datetime(2014, 9, 1))
 
     print(o)
+
+def concatenate_list(value):
+    for i in range(0, len(value)):
+        if i == 0:
+            new_value = '\'' + value[i] + '\''
+        else:
+            new_value += ', \'' + value[i] + '\''
+
+    return new_value
+
+def get_comparison_dictionary(comparisons):
+    comparison_dictionary = []
+    for i in range(0, len(comparisons)):
+        comparison_dictionary.append({'region':comparisons[i]})
+
+    return comparison_dictionary
+
+def get_period_range(msanames):
+    regions = concatenate_list(msanames)
+    select_statement = 'SELECT max(to_char(timestamp, \'YYYY-MM-dd\')) AS max, min(to_char(timestamp, \'YYYY-MM-dd\')) AS min FROM escort_ads WHERE msaname IN (' + regions + ')'
+    df = pandas.read_sql_query(select_statement, con=engine)
+    period = pandas.date_range(df['min'][0], df['max'][0], freq = 'd')
+    return period
+
+def check_dataframe(dataframe, event_date):
+    # Check to ensure there is data before and after the event date
+    before = dataframe.loc[dataframe['date'] < event_date]
+    after = dataframe.loc[dataframe['date'] >= event_date]
+
+    if not before.empty and not after.empty:
+        return True
+    else:
+        return False
+
+def get_diffindiff_data(msanames):
+    period = get_period_range(msanames)
+    dataframes = []
+
+    for msaname in msanames:
+        select_statement = 'SELECT msaname AS region, to_char(timestamp, \'YYYY-MM-dd\') AS date, count(*) AS counts FROM escort_ads WHERE msaname = \'' + msaname + '\' GROUP BY region, date ORDER BY date'
+        df = pandas.read_sql_query(select_statement, con=engine)
+
+        # Make the date column of type datetime
+        df['date'] = pandas.to_datetime(df['date'])
+        # Now make the column a period, we had to make it a datetime before making it a period
+        #df['date'] = df['date'].dt.to_period('d')
+        # Now make the date column the index
+        df = df.set_index('date')
+        # Reindex the columns, this will fill in 0's for where there aren't any values
+        df = df.reindex(index = period, columns = ['region', 'counts'], fill_value = 0)
+        # This also makes the region column equal 0 where there is no value, so we need to put the correct value there
+        df['region'] = msaname
+        df = df.reset_index()
+        df.columns = ['date', 'region', 'counts']
+        dataframes.append(df)
+
+    # Now we concat all the frames
+    result = pandas.concat(dataframes)
+    return result
+

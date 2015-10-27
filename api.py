@@ -1,18 +1,21 @@
 from functools import wraps
-from flask import Flask, make_response, request, jsonify
+from flask import Flask, make_response, request, jsonify, abort
 from initdb import tables, session, table_cols, table_conf
+from sqlalchemy.exc import DataError, SQLAlchemyError
 import agg
 import json
 import logging
 import sys
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError
-
+from flask.ext.cors import CORS
+import pdb
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 logging.basicConfig()
 
 app = Flask(__name__)
+cors = CORS(app)
 
 def validate_schema(schema):
     def decorator(f):
@@ -32,7 +35,9 @@ def validate_schema(schema):
 @app.route('/api')
 def api_root():
     ''' GET Tempus configuration file '''
-    return make_response(json.dumps(table_cols))
+    response = make_response(json.dumps(table_cols))
+    response.mimetype = 'application/json'
+    return response
 
 
 @app.route('/api/arima')
@@ -45,16 +50,22 @@ def api_outliers():
     outliers = agg.outliers(data['table'], data['group_col'],
                             data['response_col'])
     logger.debug(outliers)
-    return make_response(json.dumps(outliers))
+    response =  make_response(json.dumps(outliers))
+    response.mimetype = 'application/json'
+    return response
 
 @app.route('/api/diffindiff')
 def api_diffindiff():
     data = request.args
-    covs = data['covs'].split('|')
-    comps = agg.get_comparisons(data['table'], data['group_col'],
-                                data['group'], covs)
+    target = data['target']
+    comparisons = data['comparisons'].split('|')
+    date = data['date']
+    try:
+        diffindiff = agg.diffindiff(target, comparisons, date)
+    except ValueError:
+        abort(400)
 
-    return dd
+    return diffindiff
 
 comparison_schema = {
         "title": "Comparison group selection",
@@ -91,6 +102,14 @@ def api_get_comparison():
                                     data['group'], covs)
     except ValueError:
         raise
+    except KeyError as key_error:
+        abort(400)
+    except DataError:
+        response = make_response(json.dumps({'result': [], 'groups': []}))
+        response.mimetype = 'application/json'
+        return response
+    except SQLAlchemyError:
+        abort(500)
 
     cdata = agg.get_comparison_ts(data['table'], data['group_col'],
                                   comps, data['response_col'],
@@ -98,9 +117,11 @@ def api_get_comparison():
     response = []
     for (dt, v) in cdata:
         response.append((str(dt), v))
-    return make_response(json.dumps({'result': response,
+    response = make_response(json.dumps({'result': response,
                                     'groups': comps
                                     }))
+    response.mimetype = 'application/json'
+    return response
 
 get_series_schema = {
         "title": "Time series selection",
@@ -144,7 +165,9 @@ def api_get_series():
     response = []
     for (dt, v) in res:
         response.append((str(dt), v))
-    return make_response(json.dumps({'result': response}))
+    response =  make_response(json.dumps({'result': response}))
+    response.mimetype = 'application/json'
+    return response
 
 get_groups_schema = {
         "title": "Display group selection",
